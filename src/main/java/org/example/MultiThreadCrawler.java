@@ -31,94 +31,100 @@ public class MultiThreadCrawler {
     }
 
     public String find(String from, String target, long timeout, TimeUnit timeUnit) throws Exception {
-        long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
-        searchQueue.offer(new Node(from, null));
-        Node result = null;
-        while (!searchQueue.isEmpty() && !isFinished.get()) {
-            while (searchQueue.size() == 1) {
-                if (deadline < System.nanoTime()) {
-                    try {
-                        if (!executorService.awaitTermination(1, TimeUnit.SECONDS)) {
-                            executorService.shutdownNow();
-                        }
-                    } catch (InterruptedException e) {
-                        executorService.shutdownNow();
-                    }
-                    throw new TimeoutException();
-                }
-                Node node = searchQueue.poll();
-                System.out.println("Get page: " + node.title);
-                Set<String> links = client.getByTitle(node.title);
-                if (links.isEmpty()) {
-                    //pageNotFound
-                    continue;
-                }
-                for (String link : links) {
-                    String currentLink = link.toLowerCase();
-                    if (visited.contains(currentLink)) {
-                        continue;
-                    }
-                    visited.add(currentLink);
-                    Node subNode = new Node(link, node);
-                    if (target.equalsIgnoreCase(currentLink)) {
-                        result = subNode;
-                        break;
-                    }
-                    searchQueue.offer(subNode);
-                }
-
-
-                if (result != null) {
-                    List<String> resultList = new ArrayList<>();
-                    Node search = result;
-                    while (true) {
-                        resultList.add(search.title);
-                        if (search.next == null) {
-                            break;
-                        }
-                        search = search.next;
-                    }
-                    Collections.reverse(resultList);
-                    isFinished.compareAndSet(false, true);
-                    return join(" > ", resultList);
-                }
-            }
-
-            ArrayList<Future<String>> futures = new ArrayList<>();
-
-            for (int i = 0; i < THREADS_COUNT; i++) {
-                futures.add(executorService.submit(() -> deepSearch( target)));
-            }
-
-            while (!futures.stream().allMatch(Future::isDone)) {
-                for (Future<String> f : futures) {
-                    if (!f.isDone()) {
-                        continue;
-                    }
-                    try {
-                        String resultPath = f.get();
-                        if (resultPath != null) {
-                            isFinished.setRelease(true);
-                            try {
-                                if (!executorService.awaitTermination(500, TimeUnit.MILLISECONDS)) {
-                                    executorService.shutdownNow();
-                                }
-                            } catch (InterruptedException e) {
+        try {
+            long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
+            searchQueue.offer(new Node(from, null));
+            Node result = null;
+            while (!searchQueue.isEmpty() && !isFinished.get()) {
+                while (searchQueue.size() == 1) {
+                    if (deadline < System.nanoTime()) {
+                        try {
+                            if (!executorService.awaitTermination(1, TimeUnit.SECONDS)) {
                                 executorService.shutdownNow();
                             }
-                            return resultPath;
+                        } catch (InterruptedException e) {
+                            executorService.shutdownNow();
                         }
-                    } catch (InterruptedException | ExecutionException e) {
-                        throw new RuntimeException(e);
+                        throw new TimeoutException();
+                    }
+                    Node node = searchQueue.poll();
+                    System.out.println("Get page: " + node.title);
+                    Set<String> links = client.getByTitle(node.title);
+                    if (links.isEmpty()) {
+                        //pageNotFound
+                        continue;
+                    }
+                    for (String link : links) {
+                        String currentLink = link.toLowerCase();
+                        if (visited.contains(currentLink)) {
+                            continue;
+                        }
+                        visited.add(currentLink);
+                        Node subNode = new Node(link, node);
+                        if (target.equalsIgnoreCase(currentLink)) {
+                            result = subNode;
+                            break;
+                        }
+                        searchQueue.offer(subNode);
+                    }
+
+
+                    if (result != null) {
+                        List<String> resultList = new ArrayList<>();
+                        Node search = result;
+                        while (true) {
+                            resultList.add(search.title);
+                            if (search.next == null) {
+                                break;
+                            }
+                            search = search.next;
+                        }
+                        Collections.reverse(resultList);
+                        isFinished.compareAndSet(false, true);
+                        return join(" > ", resultList);
+                    }
+                }
+
+                ArrayList<Future<String>> futures = new ArrayList<>();
+
+                for (int i = 0; i < THREADS_COUNT; i++) {
+                    futures.add(executorService.submit(() -> deepSearch(target)));
+                }
+
+                while (!futures.stream().allMatch(Future::isDone)) {
+                    for (Future<String> f : futures) {
+                        if (!f.isDone()) {
+                            continue;
+                        }
+                        try {
+                            String resultPath = f.get();
+                            if (resultPath != null) {
+                                isFinished.setRelease(true);
+                                try {
+                                    if (!executorService.awaitTermination(500, TimeUnit.MILLISECONDS)) {
+                                        executorService.shutdownNow();
+                                    }
+                                } catch (InterruptedException e) {
+                                    executorService.shutdownNow();
+                                }
+                                return resultPath;
+                            }
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new RuntimeException(e);
+                        }
                     }
                 }
             }
+            return "not found";
+        } finally {
+            if (!executorService.isShutdown()) {
+                executorService.shutdownNow();
+
+            }
         }
-        executorService.shutdownNow();
-        return "not found";
     }
 
-    public String deepSearch( String target) {
+    public String deepSearch(String target) {
         Node result = null;
 
         Node node = searchQueue.poll();
@@ -188,7 +194,7 @@ public class MultiThreadCrawler {
         String path = null;
 
         while (!isFinished.get() && path == null && !searchQueue.isEmpty()) {
-            path = deepSearch( target);
+            path = deepSearch(target);
         }
         return path;
     }
